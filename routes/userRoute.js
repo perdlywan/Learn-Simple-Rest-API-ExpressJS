@@ -1,5 +1,6 @@
 const express = require('express');
-const {getUsers, createUser, getUserById, deleteUserById, updateUserById, tryError} = require('../controller/userController');
+const {getUsers, createUser, getUserById, deleteUserById, updateUserById, tryError} = require('../controllers/userController');
+const {asyncHandler} = require('../middlewares/asyncHandler');
 
 const userRouter = express.Router();
 
@@ -9,9 +10,9 @@ userRouter.route("/")
 
 
 userRouter.route("/:user_id")
-    .get(getUserById)
+    .get(asyncHandler(getUserById))
     .delete(deleteUserById)
-    .patch(updateUserById);
+    .put(updateUserById);
 
 userRouter.get("/error", tryError)
 

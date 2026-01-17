@@ -1,4 +1,5 @@
-const User = require('../model/userModel');
+const User = require('../models/userModel');
+const APIErrorNotFound = require('../utils/apiError');
 
 let users = [
     new User(1, 'John Doe', "aaa@gmail.com"),
@@ -38,22 +39,13 @@ const createUser = async (req, res) => {
         .json(newUser);
 }
 
-const getUserById = async (req, res) => {
-    const {user_id} = req.params;
-    
-    const getUserById = await User.findById(user_id);
-
-    console.log(getUserById);
-
-    if (getUserById.length > 0) {
-        res
-            .status(200)
-            .json(getUserById);
-    } else {
-        res
-            .status(404)
-            .json({message: "User not found"});
-    }   
+const getUserById = async (req, res, next) => {
+    try {
+        const user = await User.findById(req.params.user_id);
+        return res.json(user);
+    } catch (error) {
+        return next(error);
+    }
 }
 
 const deleteUserById = async (req, res) => {
@@ -114,13 +106,26 @@ const updateUserById = async (req, res) => {
 
 const validateBody = (body = {}) => {
     // validation
-    let errorValidation = []
+    let errorValidation = [];
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
     if (!body.name) {
-        errorValidation.push({field: "name", message: "Name is required"})
+        errorValidation.push({field: "name", message: "Name is required"});
     }
 
-    return errorValidation
+    if (!body.email){
+        errorValidation.push({field: "email", message: "Email is required"});
+    }
+
+    if (body.email && !emailRegex.test(body.email)){
+        errorValidation.push({field: "email", message: "Invalid email format"});
+    }
+
+    if (body.email.includes("@test.com")){
+        errorValidation.push({field: "email", message: "Email cannot be @test.com"});
+    }
+
+    return errorValidation;
 }
 
 module.exports = {

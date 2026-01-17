@@ -1,4 +1,6 @@
 const connection = require('../config/database');
+const {APIErrorNotFound} = require('../utils/apiError');
+const redis = require('../config/redis');
 
 class User {
     constructor(id, name, email) {
@@ -16,9 +18,7 @@ class User {
     }
 
     static async findAll() {
-        throw new Error("Not implemented")
-        
-        const [results] = await connection.query('SELECT * FROM users');
+        const [results] = await connection.query('SELECT * FROM users WHERE deleted_at IS NULL');
 
         let users = [];
 
@@ -40,21 +40,47 @@ class User {
     }
 
     static async findById(user_id) {
-        const [results] = await connection.query('SELECT * FROM users WHERE id = ?', [user_id]);
+        const cacheKey = `user:${user_id}`;
 
-        let user = [];
+         // 1. cek cache
+        try {
+            const cached = await redis.get(cacheKey);
+            if (cached) {
+                return JSON.parse(cached);
+            }
+        } catch (err) {
+            console.error('Redis GET error:', err);
+        }
 
-        if (results.length > 0){
-            user.push(new User(results[0].id, results[0].name, results[0].email));
+        // 2. query DB
+        const [rows] = await connection.query(
+            'SELECT * FROM users WHERE id = ? AND deleted_at IS NULL',
+            [user_id]
+        );
+
+        if (rows.length === 0) {
+            throw new APIErrorNotFound('User');
+        }
+
+        const user = rows[0];
+
+           // 3. set cache (TTL 5 menit)
+        try {
+            await redis.set(cacheKey, JSON.stringify(user), {
+                EX: 300
+            });
+        } catch (err) {
+            console.error('Redis SET error:', err);
         }
 
         return user;
     }
 
     static async deleteById(user_id) {
-        const [results] = await connection.query('DELETE FROM users WHERE id = ?', [user_id]);
+        const [results] = await connection.query('UPDATE users set deleted_at = Now() WHERE id = ?', [user_id]);
         
         if (results.affectedRows > 0) {
+            await redis.del(`user:${user_id}`);
             return true;
         }
 
@@ -67,6 +93,7 @@ class User {
 
          
         if (results.affectedRows > 0) {
+            await redis.del(`user:${user_id}`);
             return true;
         }
 
