@@ -1,104 +1,127 @@
-const connection = require('../config/database');
-const {APIErrorNotFound} = require('../utils/apiError');
-const redis = require('../config/redis');
+// Represents a user record and contains all database interactions for users.
+const { pool } = require('../config/database');
 
 class User {
-    constructor(id, name, email) {
-        this.id = id;
-        this.name = name;
-        this.email = email;
+  constructor({ id, name, email, created_at: createdAt, updated_at: updatedAt, password }) {
+    this.id = id;
+    this.name = name;
+    this.email = email;
+    this.password = password;
+    this.createdAt = createdAt;
+    this.updatedAt = updatedAt;
+  }
+
+  toJSON() {
+    return {
+      id: this.id,
+      name: this.name,
+      email: this.email,
+      created_at: this.createdAt,
+      updated_at: this.updatedAt,
+    };
+  }
+
+  // Paginate users with total counts for API responses.
+  static async findAll({ page, perPage }) {
+    const offset = (page - 1) * perPage;
+    const [rowsResult, totalResult] = await Promise.all([
+      pool.query(
+        'SELECT id, name, email, created_at, updated_at FROM users WHERE deleted_at is null ORDER BY id DESC LIMIT ? OFFSET ?',
+        [perPage, offset]
+      ),
+      pool.query('SELECT COUNT(*) AS total FROM users'),
+    ]);
+    const rows = rowsResult[0];
+    const total = totalResult[0][0].total;
+
+    return {
+      data: rows.map((row) => new User(row)),
+      meta: {
+        page,
+        per_page: perPage,
+        count: rows.length,
+        total_count: total,
+        total_pages: Math.max(1, Math.ceil(total / perPage)),
+      },
+    };
+  }
+
+  // Fetch a single user record or null when the id is missing.
+  static async findById(id) {
+    const [rows] = await pool.query(
+      'SELECT id, name, email, created_at, updated_at FROM users WHERE id = ? and deleted_at is null',
+      [id]
+    );
+    if (!rows.length) {
+      return null;
     }
 
-    return() {
-        return {
-            id: this.id,
-            name: this.name,
-            email: this.email
-        };
+    return new User(rows[0]);
+  }
+
+  // Insert a new user and return the hydrated model with the generated id.
+  static async create({ name, email, password }) {
+    const [res] = await pool.query('INSERT INTO users (name, email, password) VALUES (?, ?, ?)', [name, email, password]);
+    return User.findById(res.insertId);
+  }
+
+  static async findWithPasswordByEmail(email) {
+    const [rows] = await pool.query(
+      'SELECT id, name, email, password, created_at, updated_at FROM users WHERE email = ?',
+      [email],
+    );
+
+    if (!rows.length) {
+      return null;
     }
 
-    static async findAll() {
-        const [results] = await connection.query('SELECT * FROM users WHERE deleted_at IS NULL');
+    const row = rows[0];
+    return {
+      user: new User(row),
+      passwordHash: row.password,
+    };
+  }
 
-        let users = [];
+  // Update an existing user with partial payloads; returns null when the record is absent.
+  static async update(id, payload) {
+    const { name, email } = payload;
+    await pool.query('UPDATE users SET name = ?, email = ?, updated_at = NOW() WHERE id = ?', [
+      name,
+      email,
+      id,
+    ]);
+    return User.findById(id);
+  }
 
-        for (let result of results){
-            users.push(new User(result.id, result.name, result.email));
-        }
+  static async updatePassword(id, hashedPassword) {
+    await pool.query('UPDATE users SET password = ?, updated_at = NOW() WHERE id = ?', [
+      hashedPassword,
+      id,
+    ]);
+    return User.findById(id);
+  }
 
-        return users;
-    }
+  // Delete a user after confirming existence to report a friendly null instead of success.
+  static async remove(id) {
+    const existing = await User.findById(id);
+    // if (!existing) {
+    //   return null;
+    // }
 
-    static async createUser(userData){
-        const {name, email} = userData;
-        const [results] = await connection.query('INSERT INTO users (name, email) VALUES (?, ?)', [name, email]);
+    await pool.query('UPDATE users SET deleted_at = now() WHERE id = ? and deleted_at is null', [id]);
+    return existing;
+  }
 
-        if (results.affectedRows > 0) {
-            const [result] = await connection.query('SELECT * FROM users WHERE id = ?', [results.insertId]);
-            return new User(result.id, result.name, result.email);
-        }
-    }
+  static async getUserRoles(id) {
+    const [rows] = await pool.query(
+      `SELECT r.tag FROM roles r
+       JOIN user_role ur ON r.id = ur.role_id
+       WHERE ur.user_id = ?`,
+      [id]
+    );
 
-    static async findById(user_id) {
-        const cacheKey = `user:${user_id}`;
-
-         // 1. cek cache
-        try {
-            const cached = await redis.get(cacheKey);
-            if (cached) {
-                return JSON.parse(cached);
-            }
-        } catch (err) {
-            console.error('Redis GET error:', err);
-        }
-
-        // 2. query DB
-        const [rows] = await connection.query(
-            'SELECT * FROM users WHERE id = ? AND deleted_at IS NULL',
-            [user_id]
-        );
-
-        if (rows.length === 0) {
-            throw new APIErrorNotFound('User');
-        }
-
-        const user = rows[0];
-
-           // 3. set cache (TTL 5 menit)
-        try {
-            await redis.set(cacheKey, JSON.stringify(user), {
-                EX: 300
-            });
-        } catch (err) {
-            console.error('Redis SET error:', err);
-        }
-
-        return user;
-    }
-
-    static async deleteById(user_id) {
-        const [results] = await connection.query('UPDATE users set deleted_at = Now() WHERE id = ?', [user_id]);
-        
-        if (results.affectedRows > 0) {
-            await redis.del(`user:${user_id}`);
-            return true;
-        }
-
-        return false;
-    }
-
-    static async updateById(user_id, userData) {
-        const {name, email} = userData;
-        const [results] = await connection.query('UPDATE users SET name = ?, email = ? WHERE id = ?', [name, email, user_id]);
-
-         
-        if (results.affectedRows > 0) {
-            await redis.del(`user:${user_id}`);
-            return true;
-        }
-
-        return false;
-    }
+    return rows.map(row => row.tag);
+  }
 }
 
 module.exports = User;

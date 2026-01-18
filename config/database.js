@@ -1,13 +1,16 @@
-// Get the client
+// Creates and exports the MySQL connection pool used throughout the app.
 const mysql = require('mysql2/promise');
-// Create the connection to database
-const connection = mysql.createPool({
-  host: 'localhost',
-  user: 'root',
-  database: 'practice_express',
-  password: '1234',
+const { env } = require('./env');
+
+const pool = mysql.createPool({
+  host: env.db.host,
+  port: env.db.port,
+  user: env.db.user,
+  password: env.db.password,
+  database: env.db.database,
   waitForConnections: true,
-  connectionLimit: 50
+  connectionLimit: 10,
+  queueLimit: 0,
 });
 
-module.exports = connection;
+module.exports = { pool };

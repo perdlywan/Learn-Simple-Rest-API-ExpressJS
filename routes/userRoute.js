@@ -1,20 +1,23 @@
+// Defines the HTTP routes for user resources and maps them to controllers.
 const express = require('express');
-const {getUsers, createUser, getUserById, deleteUserById, updateUserById, tryError} = require('../controllers/userController');
-const {asyncHandler} = require('../middlewares/asyncHandler');
+const userController = require('../controllers/userController');
+const {asyncHandler} = require("../middlewares/asyncHandler");
+const limiterLogin = require ("../middlewares/limiterLogin")
+const router = express.Router();
 
-const userRouter = express.Router();
+router
+  .route('/')
+  .get(userController.getUsers) // List users.
+  .post(userController.createUser); // Create a new user.
 
-userRouter.route("/")
-    .get(getUsers)
-    .post(createUser);
+router.post('/login', userController.loginUser); // Login endpoint returning true/false.
 
+router
+  .route('/:id')
+  .get(asyncHandler(userController.getUserById)) // Retrieve one user.
+  .put(userController.updateUser) // Replace/update user data.
+  .delete(asyncHandler(userController.deleteUser)); // Remove the user.
 
-userRouter.route("/:user_id")
-    .get(asyncHandler(getUserById))
-    .delete(deleteUserById)
-    .put(updateUserById);
+router.patch('/:id/password', userController.updateUserPassword); // Update password only.
 
-userRouter.get("/error", tryError)
-
-module.exports = userRouter;
-
+module.exports = router;
